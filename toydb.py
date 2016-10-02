@@ -49,7 +49,7 @@ class MemoryStorage(object):
 
     def _peak(self):
         elements_s = '\n'.join('  %s: %s' % (i, elem) for i, elem in enumerate(self._data))
-        return '[\n%s\n]' % elements_s
+        print('[\n%s\n]' % elements_s)
 
 
 
@@ -192,7 +192,7 @@ class LinkedList(object):
         while node is not None:
             s += '[k:%s v:%s]-->' % (node.key, node.value_ref.value)
             node = self._follow(node.next_ref)
-        return s
+        print(s)
 
 
 
@@ -201,7 +201,7 @@ class LinkedList(object):
 ### The API to the database ie what a python user would use.
 # if the database had a query processor it would interact with this API
 class DB(object):
-    def __init__(self, dbname):
+    def __init__(self):
         self.storage = MemoryStorage()
         self.ds = LinkedList(self.storage)
 
