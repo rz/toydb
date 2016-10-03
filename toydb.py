@@ -12,20 +12,17 @@ import struct
 ### This is the physical layer
 # the file format is as follows:
 #   binary, uses pickle to serialize/de-serialize
-#   2 kinds of "pages" in the file: key data, value data
-#   a key data page is as follows:
-#     all ints are unsigned long long
-#     <1 byte: b'k'>,<page_size: int, the of bytes in the page including the meta data ie empty page has 9 = 1 for the 'k' byte + 8 for the page size>
+#   all ints are unsigned long long
+#   file has 2 pages of a given size. the first value in each page is the size of the page (always 2048 for now)
+#   a key-data page is as follows:
+#     <int page_size><key data><key data>...<key data>\x00...\x00
 #     key-data is as follows:
 #       <legnth of key data: long int><pickled key data object>
-#       a key data object is a dict with keys: key, value address, length of value
-#     a value data page is as follows:
-#     <1 byte: b'v'>,<page_size, as above>
-#       <pickled values>
-
-# empty file: k9v9
-# empty DB, initialized with pages of size 2048: k2048<2039 0 bytes>v2048<2039 0 bytes>
-# insert key "foo" with value 3: k2048<size of key data for key=foo><pickled key data><0 bytes to fill up the page>v2048<pickled value:3><0 bytes to fill up the page>
+#       a key data object is a dict with keys: key, value address
+#   a value-data page is as follows:
+#     <int page_size><value data><value data>...<value data>\x00...\x00
+#       value data is as follows:
+#         <length of value data: long int><pickled value data>
 
 class FileStorage(object):
     pass
