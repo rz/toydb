@@ -4,6 +4,7 @@
 # get <key> -> value
 # pop <key> -> value, deletes the key
 # all the keys must be comparable python types
+import pickle
 import os
 import struct
 
@@ -157,6 +158,17 @@ class FileStorage(object):
         data = self._read(data_length - self.INTEGER_LENGTH)
         return data
 
+    def read_keys(self):
+        ret = []
+        self._seek(0 + self.INTEGER_LENGTH)  # beginning of keys in the key page
+        length = self._read_integer_and_rewind()
+        while length > 0:
+            address = self._tell()
+            data = self.read(address)
+            ret.append(data)
+            length = self._read_integer_and_rewind()
+        return ret
+
     def close(self):
         self._f.close()
 
@@ -174,22 +186,69 @@ class FileStorage(object):
 
 ### This the logical layer
 # tracks of where objects are/sould be given the FileStorage specified
+#
+# we'll only append that means that to update a key we'll simply insert another
+# copy and ditto for values.
+# to denote a key that has been deleted, we'll use a special address reference: None
+# this way deleting is just inserting a key with None for a value reference.
 class Logical(object):
-    def _get():
-        pass
-    def _insert():
-        pass
-    def _pop():
-        pass
-    def _follow():
-        pass
+    def __init__(self, storage):
+        self._storage = storage
+
+    def _read_keys(self):
+        return [pickle.loads(key_data) for key_data in self._storage.read_keys()]
+
+    def _get(self, key):
+        # see _insert() for key_data format, it is a tuple (key, value_address)
+        # note that we do updates by simply inserting another copy of the key, so, to retrieve the key
+        # we have to look at the last one
+        keys = self._read_keys()
+        value_data = None
+        for k, value_address in keys:
+            if k == key:
+                if value_address is None:
+                    value_data = None
+                else:
+                    value_data = self._storage.read(value_address)
+        if value_data is None:
+            raise KeyError
+        return pickle.loads(value_data)
+
+    def _insert(self, key, value, for_deletion=False):
+        # we always insert the key
+        if not for_deletion:
+            value_data = pickle.dumps(value)
+            value_address = self._storage.write_value(value_data)
+        else:
+            value_address = None
+        key_tuple = (key, value_address)
+        key_data = pickle.dumps(key_tuple)
+        key_address = self._storage.write_key(key_data)
+
+    def _pop(self, key):
+        # see _insert() for key_data format, it is a tuple (key, value_address)
+        keys = self._read_keys()
+        value_data = None
+        for k, value_address in keys:
+            if k == key:
+                if value_address is None:
+                    value_data = None
+                else:
+                    value_data = self._storage.read(value_address)
+        if value_data is None:
+            raise KeyError
+        # this is the actual deletion
+        self._insert(key, None, for_deletion=True)
+        return pickle.loads(value_data)
 
     def get(self, key):
-        pass
+        return self._get(key)
+
     def set(self, key, value):
-        pass
+        return self._insert(key, value)
+
     def pop(self, key):
-        pass
+        return self._pop(key)
 
 
 
@@ -209,4 +268,7 @@ class DB(object):
 
     def pop(self, key):
         return self.ds.pop(key)
+
+    def close(self):
+        return self.storage.close()
 
