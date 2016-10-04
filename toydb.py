@@ -201,9 +201,6 @@ class DB(object):
         self.storage = FileStorage(dbname)
         self.ds = Logical(self.storage)
 
-    def commit(self):
-       self.ds.commit()
-
     def get(self, key):
         return self.ds.get(key)
 
