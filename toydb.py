@@ -4,9 +4,11 @@
 # get <key> -> value
 # pop <key> -> value, deletes the key
 # all the keys must be comparable python types
+import ast
 import pickle
 import os
 import struct
+import sys
 
 
 
@@ -254,7 +256,7 @@ class Logical(object):
 
 
 ### The API to the database ie what a python user would use.
-# if the database had a query processor it would interact with this API
+# the query processor interacts with this API
 class DB(object):
     def __init__(self, dbname):
         self.storage = FileStorage(dbname)
@@ -271,4 +273,103 @@ class DB(object):
 
     def close(self):
         return self.storage.close()
+
+
+
+
+### The QueryProcessor
+# this layer validates user input, makes API calls to the database
+# for now, it returns output strings
+# our query language has 3 comands:
+#   set key=value -> returns nothing
+#   get key -> returns the value associated with key
+#   pop key -> deletes the key and returns the value formerly associated with key
+#   keys and values can be any native python object
+#   the user-input key and values string will be evaluated with literal_eval() see: https://docs.python.org/3/library/ast.html#ast.literal_eval
+#   and if that fails they'll be treated as strings
+class QueryProcessor(object):
+    def __init__(self, db):
+        self._db = db
+
+    def _validate_cmd(self, s):
+        return s in ['set', 'get', 'pop']
+
+    def _to_python(self, s):
+        try:
+            pyval = ast.literal_eval(s)
+        except (SyntaxError, ValueError):
+            pyval = str(s)
+        return pyval
+
+    def _format(self, v):
+        return '<%s>: %s' % (type(v).__name__, v)
+
+    def _handle_set(self, set_args):
+        if set_args.count('=') != 1:
+            return 'Invalid set syntax.'
+        key_str, value_str = set_args.split('=')
+        key = self._to_python(key_str)
+        val = self._to_python(value_str)
+        self._db.set(key, val)
+        return '  set %s: %s' % (key, val)
+
+    def _handle_get(self, get_args):
+        key = self._to_python(get_args)
+        try:
+            val = self._db.get(key)
+        except KeyError:
+            return 'Not found: %s' % get_args
+        return self._format(val)
+
+    def _handle_pop(self, pop_args):
+        key = self._to_python(pop_args)
+        try:
+            val = self._db.pop(key)
+        except KeyError:
+            return 'Not found: %s' % pop_args
+        return self._format(val)
+
+    def execute(self, user_input):
+        """
+        Accepts a string as provided by the user and returns the output that should be displayed.
+
+        The return value is a string with the result of the query or an error message.
+        """
+        cmd, *pieces = user_input.split()
+        if not self._validate_cmd(cmd):
+            return 'Invalid query. %s is not a toydb command.' % cmd
+        cmd_args = ''.join(pieces)
+        if cmd == 'set':
+            return self._handle_set(cmd_args)
+        elif cmd == 'get':
+            return self._handle_get(cmd_args)
+        elif cmd == 'pop':
+            return self._handle_pop(cmd_args)
+
+
+
+
+
+### The database client.
+def print_usage():
+    print('Usage: python toydb <path to the database file>.')
+    print('The file will be created if it does not exist.')
+
+
+if __name__ == '__main__':
+    args = sys.argv[1:]
+    if len(args) != 1:
+        print_usage()
+        sys.exit()
+    dbname = args[0]
+    db = DB(dbname)
+    qp = QueryProcessor(db)
+    print('Use Ctrl-D to exit.')
+    while True:
+        try:
+            user_input = input('[toydb]=> ')
+            output = qp.execute(user_input)
+            print(output)
+        except (EOFError, KeyboardInterrupt):
+            sys.exit()
 
