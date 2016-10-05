@@ -136,6 +136,13 @@ class DBTest(unittest.TestCase):
         self.assertEqual(self.db.get('fools'), 5555)
         self.assertEqual(self.db.get('fooled'), 6)
 
+    def test_obj_key_ovj_value(self):
+        key = [0, 1, 2]
+        val = {1:10, 2:20}
+        self.db.set(key, val)
+        retrieved_val = self.db.get(key)
+        self.assertEqual(val, retrieved_val)
+
     def tearDown(self):
         self.db.close()
         delete_db_file()
