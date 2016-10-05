@@ -29,7 +29,7 @@ import struct
 class FileStorage(object):
     # to simplify debugging/viewing with xdd, make our pages very small for now
     # PAGE_SIZE = 2048
-    PAGE_SIZE = 128
+    PAGE_SIZE = 512
 
     # to simplify debugging / viewing with xdd, make our ints 2 bytes for now
     # INTEGER_FORMAT = '!Q'
