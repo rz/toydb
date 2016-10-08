@@ -15,50 +15,35 @@ import sys
 
 ### This is the physical layer
 # the file format is as follows:
-#   binary, uses pickle to serialize/de-serialize
+#   binary
 #   all ints are unsigned long long
-#   file has 2 pages of a given size. the first value in each page is the size of the page (always 2048 for now)
-#   a key-data page is as follows:
-#     <int page_size><key data><key data>...<key data>\x00...\x00
-#     key-data is as follows:
-#       <legnth of key data: long int><pickled key data object>
-#       a key data object is a dict with keys: key, value address
-#   a value-data page is as follows:
-#     <int page_size><value data><value data>...<value data>\x00...\x00
-#       value data is as follows:
-#         <length of value data: long int><pickled value data>
-
+#   the data format in the file is as follows <int lenght of data><binary data>
+#   the external API of the storage hides the details of the format, reads the data at an address without the caller having to concern itself with its length
+#   the external API only has an append method for writing, soft enforcing of write-only
 class FileStorage(object):
-    # to simplify debugging/viewing with xdd, make our pages very small for now
-    # PAGE_SIZE = 2048
-    PAGE_SIZE = 512
-
-    # to simplify debugging / viewing with xdd, make our ints 2 bytes for now
+    # to simplify debugging / viewing with xxd, make our ints 2 bytes for now
     # INTEGER_FORMAT = '!Q'
     # INTEGER_LENGTH = 8  # in bytes, this is implied by INTEGER_FORMAT, see https://docs.python.org/3.1/library/struct.html#format-characters
     INTEGER_FORMAT = '!H'
     INTEGER_LENGTH = 2  # in bytes, this is implied by INTEGER_FORMAT, see https://docs.python.org/3.1/library/struct.html#format-characters
 
     # initialization methods
-    def __init__(self, dbname):
+    def __init__(self, filename):
         try:
-            f = open(dbname, 'bx+')  # x mode raises exception when the file exists
+            f = open(filename, 'bx+')  # x mode raises exception when the file exists
         except FileExistsError:
-            f = open(dbname, 'r+b')
+            f = open(filename, 'r+b')
         self._f = f
-        self._initialize_pages()
 
-    def _initialize_pages(self):
-        end_address = self._seek_end()
-        needed_size = 2*self.PAGE_SIZE
-        if end_address < needed_size:
-            self._write(b'\x00' * (needed_size - end_address))
-        if end_address == 0:
-            # the file was originally empty
-            self._seek(0)
-            self._write_integer(self.PAGE_SIZE)
-            self._seek(self.PAGE_SIZE)
-            self._write_integer(self.PAGE_SIZE)
+        # initialize the file to ensure there are zero bytes at the end
+        if self._is_empty():
+            self._zero_end(128)
+        else:
+            self._seek(-1, os.SEEK_END)
+            last_char = self._read(1)
+            if last_char != b'\x00':
+                self._zero_end(128)
+
 
     # methods that interact with the associated file ie self._f
     def _tell(self):
@@ -76,6 +61,10 @@ class FileStorage(object):
     def _seek_end(self):
         """Moves the stream position to the end of file and returns that address."""
         return self._f.seek(0, os.SEEK_END)
+
+    def _is_empty(self):
+        end_address = self._seek_end()
+        return end_address == 0
 
     def _read(self, n):
         """Wrapper around File.read() for consistency."""
@@ -98,6 +87,11 @@ class FileStorage(object):
         bs = self._read(self.INTEGER_LENGTH)
         return struct.unpack(self.INTEGER_FORMAT, bs)[0]
 
+    def _zero_end(self, n=1):
+        """Writes zero bytes at the end of the file."""
+        self._seek_end()
+        self._write(b'\x00'* self.INTEGER_LENGTH * n)
+
     def _read_integer_and_rewind(self):
         """
         Reads an integer from the file at the current stream position and
@@ -118,7 +112,7 @@ class FileStorage(object):
         self._write(data)
         return addr
 
-    def _seek_formatted_data_end(self, start_at):
+    def _seek_formatted_data_end(self, start_at=0):
         """
         Moves the current stream position to the end of the data after start_at.
 
@@ -133,43 +127,37 @@ class FileStorage(object):
             length = self._read_integer_and_rewind()
 
     # external api
-    def write_key(self, key_data):
-        """
-        Appends the key-data to the key page.
-
-        key_data should be an iterable of bytes.
-        """
-        # find the end of the existing key-data:
-        self._seek_start()
-        self._seek_formatted_data_end(0 + self.INTEGER_LENGTH)  # key data is the first page and the first thing in the page is an integer for the page size
-        return self._write_formatted(key_data)
-
-    def write_value(self, value_data):
-        """
-        Appends the value-data to the key page.
-
-        value_data should be an iterable of bytes.
-        """
-        self._seek_start()
-        self._seek_formatted_data_end(self.PAGE_SIZE + self.INTEGER_LENGTH) # value-data is the 2nd page and the first thing in the page is an integer for the page size
-        return self._write_formatted(value_data)
+    def append(self, data):
+        self._seek_formatted_data_end()
+        self._last_address = self._write_formatted(data)
+        self._zero_end()
+        return self._last_address
 
     def read(self, address):
+        """
+        Reads the data at the given address. Returns None if the address is past the end of the data on file.
+        """
         self._seek(address)
         data_length = self._read_integer()
+        if data_length == 0:
+            return None
         data = self._read(data_length - self.INTEGER_LENGTH)
         return data
 
-    def read_keys(self):
-        ret = []
-        self._seek(0 + self.INTEGER_LENGTH)  # beginning of keys in the key page
+    def next_address(self, address):
+        """
+        Returns the address of the first piece of data after address.
+        """
+        self._seek_start()
         length = self._read_integer_and_rewind()
-        while length > 0:
-            address = self._tell()
-            data = self.read(address)
-            ret.append(data)
+        read_address = 0
+        while read_address <= address and length > 0:
             length = self._read_integer_and_rewind()
-        return ret
+            self._seek(length, os.SEEK_CUR)
+            read_address += length
+        if read_address == address:
+            return None
+        return read_address
 
     def close(self):
         self._f.close()
@@ -193,12 +181,23 @@ class FileStorage(object):
 # copy and ditto for values.
 # to denote a key that has been deleted, we'll use a special address reference: None
 # this way deleting is just inserting a key with None for a value reference.
+# we'll keep 2 files / storage objects, one for keys and another for values.
+# we'll use pickle to serialize/de-serialize data to/from binary
 class Logical(object):
-    def __init__(self, storage):
-        self._storage = storage
+    def __init__(self, dbname):
+        self._key_storage = FileStorage(dbname + '.keys')
+        self._value_storage = FileStorage(dbname + '.values')
 
     def _read_keys(self):
-        return [pickle.loads(key_data) for key_data in self._storage.read_keys()]
+        keys = []
+        address = 0
+        while address is not None:
+            key_data = self._key_storage.read(address)
+            if key_data is not None:
+                key = pickle.loads(key_data)
+                keys.append(key)
+            address = self._key_storage.next_address(address)
+        return keys
 
     def _get(self, key):
         # see _insert() for key_data format, it is a tuple (key, value_address)
@@ -211,7 +210,7 @@ class Logical(object):
                 if value_address is None:
                     value_data = None
                 else:
-                    value_data = self._storage.read(value_address)
+                    value_data = self._value_storage.read(value_address)
         if value_data is None:
             raise KeyError
         return pickle.loads(value_data)
@@ -220,12 +219,12 @@ class Logical(object):
         # we always insert the key
         if not for_deletion:
             value_data = pickle.dumps(value)
-            value_address = self._storage.write_value(value_data)
+            value_address = self._value_storage.append(value_data)
         else:
             value_address = None
         key_tuple = (key, value_address)
         key_data = pickle.dumps(key_tuple)
-        key_address = self._storage.write_key(key_data)
+        key_address = self._key_storage.append(key_data)
 
     def _pop(self, key):
         # see _insert() for key_data format, it is a tuple (key, value_address)
@@ -236,7 +235,7 @@ class Logical(object):
                 if value_address is None:
                     value_data = None
                 else:
-                    value_data = self._storage.read(value_address)
+                    value_data = self._value_storage.read(value_address)
         if value_data is None:
             raise KeyError
         # this is the actual deletion
@@ -252,6 +251,9 @@ class Logical(object):
     def pop(self, key):
         return self._pop(key)
 
+    def close_storage(self):
+        self._key_storage.close()
+        self._value_storage.close()
 
 
 
@@ -259,8 +261,7 @@ class Logical(object):
 # the query processor interacts with this API
 class DB(object):
     def __init__(self, dbname):
-        self.storage = FileStorage(dbname)
-        self.ds = Logical(self.storage)
+        self.ds = Logical(dbname)
 
     def get(self, key):
         return self.ds.get(key)
@@ -272,7 +273,7 @@ class DB(object):
         return self.ds.pop(key)
 
     def close(self):
-        return self.storage.close()
+        return self.ds.close_storage()
 
 
 
